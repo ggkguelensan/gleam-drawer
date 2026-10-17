@@ -1,0 +1,7 @@
+name = "drawer_demo"
+version = "0.1.0"
+target = "javascript"
+
+[dependencies]
+gleam_drawer = { path = "../.." }
+gleam_stdlib = ">= 0.60.0 and < 2.0.0"

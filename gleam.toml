@@ -1,0 +1,12 @@
+name = "gleam_drawer"
+version = "0.1.0"
+target = "javascript"
+gleam = ">= 1.14.0"
+description = "Native Gleam core and browser driver for Shell Sheet: gestures, snap points and adaptive dialogs"
+repository = { type = "github", user = "ggkguelensan", repo = "gleam-drawer" }
+
+[dependencies]
+gleam_stdlib = ">= 0.60.0 and < 2.0.0"
+
+[dev-dependencies]
+gleeunit = ">= 1.0.0 and < 2.0.0"

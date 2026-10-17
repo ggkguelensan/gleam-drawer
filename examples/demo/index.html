@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Gleam Drawer</title><link rel="stylesheet" href="/style.css"></head>
+<body>
+<main id="app">
+  <nav><span class="brand">✳ gleam drawer</span><a href="https://github.com/ggkguelensan/gleam-drawer">Source ↗</a></nav>
+  <section class="intro"><p class="eyebrow">GLEAM / INTERACTION LAB</p><h1>A little motion.<br>A lot of possibility.</h1><p class="lead">An adaptive surface with a typed Gleam API. Drag between snap points, resize to content, or turn a sheet into a dialog.</p><button id="open" class="primary">Open the drawer <span>↗</span></button><p id="status" role="status">Ready to explore</p></section>
+  <div class="features"><article><span>01</span><h2>Touch & go</h2><p>Drag the handle. Scroll the content. Each interaction has its own space.</p></article><article><span>02</span><h2>Your state, your rules</h2><p>Gestures request a change. Your Gleam application decides what happens next.</p></article><article><span>03</span><h2>One surface</h2><p>Move from sheet to dialog without losing your content or its state.</p></article></div>
+</main>
+<div id="portal" style="visibility: hidden">
+  <div id="backdrop"></div>
+  <div id="viewport">
+    <section id="popup" aria-labelledby="title" tabindex="-1">
+      <div id="content">
+        <header id="header"><div id="handle" aria-hidden="true"><span></span></div><div id="header-layer"><p class="eyebrow">MAKE YOURSELF AT HOME</p><h2 id="title">Room to explore.</h2><p>Same content. A different perspective.</p></div></header>
+        <div id="body"><div id="body-layer"><div class="note"><span>✳</span><p>Grab the handle to find your next snap point. The content below scrolls independently.</p></div><label for="notes">Something worth keeping</label><input id="notes" placeholder="This stays when the shape changes…"><div class="story"><h3>Built around your application</h3><p>Open, close and snap are requests. The example accepts them in Gleam and sends an atomic target back to the engine.</p><h3>A surface that adapts</h3><p>Use the controls below to try a taller snap point, fit the content or morph into a centered dialog.</p><h3>Comfort in the details</h3><p>Keyboard focus stays inside the modal. Escape closes it and restores focus to the trigger. Reduced motion follows your device settings.</p></div></div></div>
+        <footer id="footer"><div id="footer-layer"><div class="actions"><button id="expand">Resize</button><button id="fit">Fit content</button><button id="morph">Sheet ↔ Dialog</button><button id="close" class="primary">Done</button></div></div></footer>
+      </div>
+    </section>
+  </div>
+</div>
+<script type="module">import { main } from './build/dev/javascript/drawer_demo/drawer_demo.mjs'; main();</script>
+</body></html>

@@ -1,0 +1,22 @@
+name: Check
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: '28'
+          gleam-version: '1.19.2'
+          rebar3-version: '3'
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium webkit
+      - run: npm run check
+      - run: git diff --exit-code -- src/gleam_drawer/internal/engine.mjs
