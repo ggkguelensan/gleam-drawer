@@ -1,6 +1,6 @@
 # Upstream provenance
 
-`dom/` is an unmodified snapshot of the browser driver from
+`dom/` is adapted from the browser driver at
 https://github.com/ggkguelensan/bottom-sheet/tree/0ad6309d34f0f2547be443e2452a2f2d51438309/packages/dom/src
 (commit `0ad6309d34f0f2547be443e2452a2f2d51438309`).
 
@@ -14,7 +14,11 @@ behavior is implemented in `src/gleam_drawer/core.gleam`, `geometry.gleam` and
 and calls Gleam geometry. Generated output is checked into
 `src/gleam_drawer/internal/engine.mjs`; do not edit it by hand.
 
-To update the browser driver, replace `dom/` from a single upstream revision,
+Local changes fix gesture ownership: early pointer capture, one displacement per
+frame, translation below the lowest snap, interruption of active animations, and
+continuous reconciliation after release. Preserve these changes when updating.
+
+To update the browser driver, reconcile `dom/` from a single upstream revision,
 update this provenance, rebuild, and run the complete checks. Update the test
 oracle deliberately when adopting core contract changes. React, Effector and
 Motion adapters are not included.

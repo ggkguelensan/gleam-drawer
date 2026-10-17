@@ -21,6 +21,7 @@ type GestureSessionOptions<
   getRegistry(): ShellSheetRegistrySnapshot<TRegionKey>;
   getGeometry(): ShellSheetMeasuredGeometry<TSnap> | null;
   tuning?: ShellSheetGestureOptions;
+  interrupt(): number | null;
   reconcile(): void;
 }>;
 
@@ -36,7 +37,7 @@ type PointerSession = {
   readonly area: HTMLElement;
   readonly startX: number;
   readonly startY: number;
-  readonly startHeight: number;
+  startHeight: number;
   accepted: boolean;
   interactionId: number | null;
   currentHeight: number;
@@ -83,6 +84,12 @@ export function createGestureSession<
     while (listenerCleanups.length > 0) listenerCleanups.pop()?.();
   };
 
+  const releaseCapture = (session: PointerSession): void => {
+    if (session.area.hasPointerCapture(session.pointerId)) {
+      session.area.releasePointerCapture(session.pointerId);
+    }
+  };
+
   const cancelPointer = (
     reason: ShellInteractionCancelReason,
     notifyCore: boolean,
@@ -102,6 +109,7 @@ export function createGestureSession<
     }
     options.getRegistry().elements.popup?.removeAttribute("data-swiping");
     pointer = null;
+    releaseCapture(session);
     options.reconcile();
   };
 
@@ -111,17 +119,15 @@ export function createGestureSession<
     const { popup, backdrop } = options.getRegistry().elements;
     const geometry = options.getGeometry();
     if (!popup || !geometry) return;
-    popup.style.height = `${session.currentHeight}px`;
-    popup.style.setProperty(
-      "--drawer-swipe-movement-y",
-      `${session.startHeight - session.currentHeight}px`,
-    );
     const lowest = geometry.resolvedSnapPoints[0]?.height ?? session.startHeight;
-    const denominator = Math.max(1, session.startHeight - lowest);
-    const progress = Math.max(
-      0,
-      Math.min(1, (session.startHeight - session.currentHeight) / denominator),
-    );
+    // Resize between snaps. Below the lowest snap, move the intact surface
+    // toward dismissal instead of crushing its header/body/footer layout.
+    const height = Math.max(lowest, session.currentHeight);
+    const movement = height - session.currentHeight;
+    popup.style.height = `${height}px`;
+    popup.style.transform = `translateY(${movement}px)`;
+    popup.style.setProperty("--drawer-swipe-movement-y", `${movement}px`);
+    const progress = Math.max(0, Math.min(1, movement / Math.max(1, lowest)));
     backdrop?.style.setProperty("--drawer-swipe-progress", String(progress));
     popup.toggleAttribute(
       "data-swipe-dismiss",
@@ -136,7 +142,8 @@ export function createGestureSession<
   };
 
   const addSamples = (session: PointerSession, event: PointerEvent): void => {
-    const coalesced = event.getCoalescedEvents?.() ?? [event];
+    const events = event.getCoalescedEvents?.();
+    const coalesced = events?.length ? events : [event];
     for (const sample of coalesced) {
       session.samples.push({ y: sample.clientY, time: sample.timeStamp });
     }
@@ -187,6 +194,13 @@ export function createGestureSession<
       samples: [{ y: event.clientY, time: event.timeStamp }],
     };
     suppressHandleClick = false;
+    // Capture on down: the first move can already be outside a small handle.
+    // Activation still waits for a vertical gesture, preserving ordinary taps.
+    try {
+      area.setPointerCapture(event.pointerId);
+    } catch {
+      pointer = null;
+    }
   };
 
   const onPointerMove = (event: PointerEvent): void => {
@@ -204,8 +218,10 @@ export function createGestureSession<
       }
       if (Math.abs(deltaX) >= Math.abs(deltaY)) {
         pointer = null;
+        releaseCapture(session);
         return;
       }
+      session.startHeight = options.interrupt() ?? session.startHeight;
       session.accepted = true;
       session.interactionId = options.controller.beginInteraction(session.origin);
       options.getRegistry().elements.popup?.setAttribute("data-swiping", "");
@@ -225,11 +241,10 @@ export function createGestureSession<
     const geometry = options.getGeometry();
     if (!geometry) return;
     const points = geometry.resolvedSnapPoints;
-    const minimum = points[0]?.height ?? session.startHeight;
     const maximum = points.at(-1)?.height ?? session.startHeight;
     session.currentHeight = applyRubberBand({
       value: session.startHeight - deltaY,
-      min: minimum,
+      min: 0,
       max: maximum,
       dimension: geometry.viewport.height,
       constant: rubberBandConstant,
@@ -242,6 +257,7 @@ export function createGestureSession<
     if (!session || event.pointerId !== session.pointerId) return;
     if (!session.accepted || session.interactionId === null) {
       pointer = null;
+      releaseCapture(session);
       return;
     }
     addSamples(session, event);
@@ -259,7 +275,7 @@ export function createGestureSession<
       cancelPointer("target-changed", true);
       return;
     }
-    const dragDistance = session.startHeight - session.currentHeight;
+    const dragDistance = event.clientY - session.startY;
     const destination = selectReleaseDestination({
       currentHeight: session.currentHeight,
       activeSnapPoint: target.snapPoint,
@@ -291,6 +307,7 @@ export function createGestureSession<
     options.controller.endInteraction(session.interactionId);
     options.getRegistry().elements.popup?.removeAttribute("data-swiping");
     pointer = null;
+    releaseCapture(session);
     if (destination.type === "close") {
       options.controller.requestClose("gesture", {
         origin: "gesture",

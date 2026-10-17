@@ -49,6 +49,7 @@ type TransitionCoordinatorOptions<
 export type ShellSheetTransitionCoordinator = Readonly<{
   schedule(reason: string): void;
   reconcileNow(): void;
+  interruptForGesture(): number | null;
   destroy(): void;
 }>;
 
@@ -348,6 +349,8 @@ export function createTransitionCoordinator<
     }
   };
 
+  let gestureReconcile = false;
+
   const run = (): void => {
     scheduledFrame = null;
     if (destroyed) return;
@@ -355,6 +358,7 @@ export function createTransitionCoordinator<
     if (!environment) return;
     const registry = options.getRegistry();
     const snapshot = options.controller.getSnapshot();
+    if (snapshot.interaction !== null) return;
     const authoritative = snapshot.authoritativeTarget;
     const visualTarget = visualOpenTarget(snapshot);
     const { portal, popup, backdrop } = registry.elements;
@@ -422,6 +426,7 @@ export function createTransitionCoordinator<
       return;
     }
     if (
+      !gestureReconcile &&
       active === null &&
       snapshot.phase === "open" &&
       snapshot.settledTarget?.targetId === authoritative.targetId &&
@@ -444,6 +449,8 @@ export function createTransitionCoordinator<
       ? "translateY(0px)"
       : computedPopup.transform;
     const currentOpacity = computedPopup.opacity || "1";
+    const changeEasing = gestureReconcile ? timing.easingEnter : timing.easingChange;
+    gestureReconcile = false;
     const targetBackdropOpacity = backdrop
       ? Number(environment.getComputedStyle(backdrop).opacity || 1)
       : 1;
@@ -482,6 +489,8 @@ export function createTransitionCoordinator<
     const transitionSnapshot = options.controller.getSnapshot();
     options.onBeforeVisible(transitionSnapshot);
     projectStableState(transitionSnapshot, registry, geometry);
+    // Keep the released visual position until WAAPI takes over next frame.
+    popup.style.transform = currentTransform;
     popup.style.height = `${
       openingFromClosed ? geometry.targetHeight : fromHeight
     }px`;
@@ -655,7 +664,7 @@ export function createTransitionCoordinator<
                   authoritative.contentResizeBehavior === "immediate"
                     ? 0
                     : timing.geometry,
-                easing: timing.easingChange,
+                easing: changeEasing,
               },
             ),
           );
@@ -671,7 +680,7 @@ export function createTransitionCoordinator<
                     authoritative.contentResizeBehavior === "immediate"
                       ? 0
                       : timing.geometry,
-                  easing: timing.easingChange,
+                  easing: changeEasing,
                 },
               ),
             );
@@ -702,7 +711,10 @@ export function createTransitionCoordinator<
                   transform: [currentTransform, "translateY(0px)"],
                   opacity: [Number(currentOpacity), 1],
                 }
-              : { height: [`${fromHeight}px`, `${geometry.targetHeight}px`] },
+              : {
+                  height: [`${fromHeight}px`, `${geometry.targetHeight}px`],
+                  transform: [currentTransform, "translateY(0px)"],
+                },
             {
               durationMs:
                 instant ||
@@ -710,7 +722,7 @@ export function createTransitionCoordinator<
                 authoritative.contentResizeBehavior === "immediate"
                   ? 0
                   : timing.geometry,
-              easing: timing.easingChange,
+              easing: changeEasing,
             },
           ),
         );
@@ -733,6 +745,35 @@ export function createTransitionCoordinator<
   };
 
   return {
+    interruptForGesture() {
+      const environment = options.getEnvironment();
+      const popup = options.getRegistry().elements.popup;
+      if (!environment || !popup) return null;
+      // Freeze the current rendered frame before stopping an in-flight clock.
+      const rect = popup.getBoundingClientRect();
+      const style = environment.getComputedStyle(popup);
+      const transform = style.transform;
+      const matrix = new popup.ownerDocument.defaultView!.DOMMatrixReadOnly(
+        transform === "none" ? undefined : transform,
+      );
+      const sheet = options.controller.getSnapshot().authoritativeTarget;
+      const offset = sheet?.open && sheet.presentation === "sheet" ? matrix.m42 : 0;
+      const height = Math.max(0, rect.height - offset);
+      const token = active?.transitionId ?? pendingTransitionId;
+      stopActive();
+      if (animateFrame !== null) environment.cancelAnimationFrame(animateFrame);
+      if (scheduledFrame !== null) environment.cancelAnimationFrame(scheduledFrame);
+      animateFrame = null;
+      scheduledFrame = null;
+      pendingTransitionId = null;
+      if (token !== null) options.controller.cancelTransition(token, "driver-cancelled");
+      popup.style.height = `${height}px`;
+      popup.style.transform = "translateY(0px)";
+      popup.style.opacity = "1";
+      currentHeight = height;
+      gestureReconcile = true;
+      return height;
+    },
     schedule() {
       if (destroyed || scheduledFrame !== null) return;
       const environment = options.getEnvironment();

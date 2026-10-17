@@ -194,6 +194,7 @@ export function bindShellSheetToDom<
     getRegistry: registry.getSnapshot,
     getGeometry: () => geometry,
     ...(options.gesture ? { tuning: options.gesture } : {}),
+    interrupt: () => coordinator.interruptForGesture(),
     reconcile: () => coordinator.schedule("gesture-reconcile"),
   });
 

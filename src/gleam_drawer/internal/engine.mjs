@@ -488,6 +488,7 @@ function createTransitionCoordinator(options) {
       });
     }
   };
+  let gestureReconcile = false;
   const run = () => {
     scheduledFrame = null;
     if (destroyed) return;
@@ -495,6 +496,7 @@ function createTransitionCoordinator(options) {
     if (!environment) return;
     const registry = options.getRegistry();
     const snapshot = options.controller.getSnapshot();
+    if (snapshot.interaction !== null) return;
     const authoritative = snapshot.authoritativeTarget;
     const visualTarget = visualOpenTarget(snapshot);
     const { portal, popup, backdrop } = registry.elements;
@@ -537,7 +539,7 @@ function createTransitionCoordinator(options) {
     if (active?.targetId === authoritative.targetId && Math.abs(active.targetHeight - geometry.targetHeight) < GEOMETRY_EPSILON) {
       return;
     }
-    if (active === null && snapshot.phase === "open" && snapshot.settledTarget?.targetId === authoritative.targetId && currentHeight !== null && Math.abs(currentHeight - geometry.targetHeight) < GEOMETRY_EPSILON) {
+    if (!gestureReconcile && active === null && snapshot.phase === "open" && snapshot.settledTarget?.targetId === authoritative.targetId && currentHeight !== null && Math.abs(currentHeight - geometry.targetHeight) < GEOMETRY_EPSILON) {
       projectStableState(snapshot, registry, geometry);
       popup.style.height = `${geometry.targetHeight}px`;
       popup.style.removeProperty("transform");
@@ -549,6 +551,8 @@ function createTransitionCoordinator(options) {
     const fromHeight = geometry.currentRect.height > 0 ? geometry.currentRect.height : currentHeight ?? geometry.targetHeight;
     const currentTransform = computedPopup.transform === "none" ? "translateY(0px)" : computedPopup.transform;
     const currentOpacity = computedPopup.opacity || "1";
+    const changeEasing = gestureReconcile ? timing.easingEnter : timing.easingChange;
+    gestureReconcile = false;
     const targetBackdropOpacity = backdrop ? Number(environment.getComputedStyle(backdrop).opacity || 1) : 1;
     const currentLayerVisuals = /* @__PURE__ */ new Map();
     for (const layers of registry.regionLayers.values()) {
@@ -581,6 +585,7 @@ function createTransitionCoordinator(options) {
     const transitionSnapshot = options.controller.getSnapshot();
     options.onBeforeVisible(transitionSnapshot);
     projectStableState(transitionSnapshot, registry, geometry);
+    popup.style.transform = currentTransform;
     popup.style.height = `${openingFromClosed ? geometry.targetHeight : fromHeight}px`;
     portal.style.removeProperty("visibility");
     portal.style.removeProperty("pointer-events");
@@ -725,7 +730,7 @@ function createTransitionCoordinator(options) {
               },
               {
                 durationMs: instant || reduceMotion || authoritative.contentResizeBehavior === "immediate" ? 0 : timing.geometry,
-                easing: timing.easingChange
+                easing: changeEasing
               }
             )
           );
@@ -736,7 +741,7 @@ function createTransitionCoordinator(options) {
                 { opacity: [targetBackdropOpacity, targetBackdrop] },
                 {
                   durationMs: instant || reduceMotion || authoritative.contentResizeBehavior === "immediate" ? 0 : timing.geometry,
-                  easing: timing.easingChange
+                  easing: changeEasing
                 }
               )
             );
@@ -765,10 +770,13 @@ function createTransitionCoordinator(options) {
               height: [`${fromHeight}px`, `${geometry.targetHeight}px`],
               transform: [currentTransform, "translateY(0px)"],
               opacity: [Number(currentOpacity), 1]
-            } : { height: [`${fromHeight}px`, `${geometry.targetHeight}px`] },
+            } : {
+              height: [`${fromHeight}px`, `${geometry.targetHeight}px`],
+              transform: [currentTransform, "translateY(0px)"]
+            },
             {
               durationMs: instant || reduceMotion || authoritative.contentResizeBehavior === "immediate" ? 0 : timing.geometry,
-              easing: timing.easingChange
+              easing: changeEasing
             }
           )
         );
@@ -789,6 +797,34 @@ function createTransitionCoordinator(options) {
     });
   };
   return {
+    interruptForGesture() {
+      const environment = options.getEnvironment();
+      const popup = options.getRegistry().elements.popup;
+      if (!environment || !popup) return null;
+      const rect = popup.getBoundingClientRect();
+      const style = environment.getComputedStyle(popup);
+      const transform = style.transform;
+      const matrix = new popup.ownerDocument.defaultView.DOMMatrixReadOnly(
+        transform === "none" ? void 0 : transform
+      );
+      const sheet = options.controller.getSnapshot().authoritativeTarget;
+      const offset = sheet?.open && sheet.presentation === "sheet" ? matrix.m42 : 0;
+      const height = Math.max(0, rect.height - offset);
+      const token = active?.transitionId ?? pendingTransitionId;
+      stopActive();
+      if (animateFrame !== null) environment.cancelAnimationFrame(animateFrame);
+      if (scheduledFrame !== null) environment.cancelAnimationFrame(scheduledFrame);
+      animateFrame = null;
+      scheduledFrame = null;
+      pendingTransitionId = null;
+      if (token !== null) options.controller.cancelTransition(token, "driver-cancelled");
+      popup.style.height = `${height}px`;
+      popup.style.transform = "translateY(0px)";
+      popup.style.opacity = "1";
+      currentHeight = height;
+      gestureReconcile = true;
+      return height;
+    },
     schedule() {
       if (destroyed || scheduledFrame !== null) return;
       const environment = options.getEnvironment();
@@ -933,6 +969,11 @@ function createGestureSession(options) {
   const clearListeners = () => {
     while (listenerCleanups.length > 0) listenerCleanups.pop()?.();
   };
+  const releaseCapture = (session) => {
+    if (session.area.hasPointerCapture(session.pointerId)) {
+      session.area.releasePointerCapture(session.pointerId);
+    }
+  };
   const cancelPointer = (reason, notifyCore) => {
     const session = pointer;
     if (!session) return;
@@ -945,6 +986,7 @@ function createGestureSession(options) {
     }
     options.getRegistry().elements.popup?.removeAttribute("data-swiping");
     pointer = null;
+    releaseCapture(session);
     options.reconcile();
   };
   const writeFrame = (session) => {
@@ -953,17 +995,13 @@ function createGestureSession(options) {
     const { popup, backdrop } = options.getRegistry().elements;
     const geometry = options.getGeometry();
     if (!popup || !geometry) return;
-    popup.style.height = `${session.currentHeight}px`;
-    popup.style.setProperty(
-      "--drawer-swipe-movement-y",
-      `${session.startHeight - session.currentHeight}px`
-    );
     const lowest = geometry.resolvedSnapPoints[0]?.height ?? session.startHeight;
-    const denominator = Math.max(1, session.startHeight - lowest);
-    const progress = Math.max(
-      0,
-      Math.min(1, (session.startHeight - session.currentHeight) / denominator)
-    );
+    const height = Math.max(lowest, session.currentHeight);
+    const movement = height - session.currentHeight;
+    popup.style.height = `${height}px`;
+    popup.style.transform = `translateY(${movement}px)`;
+    popup.style.setProperty("--drawer-swipe-movement-y", `${movement}px`);
+    const progress = Math.max(0, Math.min(1, movement / Math.max(1, lowest)));
     backdrop?.style.setProperty("--drawer-swipe-progress", String(progress));
     popup.toggleAttribute(
       "data-swipe-dismiss",
@@ -976,7 +1014,8 @@ function createGestureSession(options) {
     session.frame = environment.requestAnimationFrame(() => writeFrame(session));
   };
   const addSamples = (session, event) => {
-    const coalesced = event.getCoalescedEvents?.() ?? [event];
+    const events = event.getCoalescedEvents?.();
+    const coalesced = events?.length ? events : [event];
     for (const sample of coalesced) {
       session.samples.push({ y: sample.clientY, time: sample.timeStamp });
     }
@@ -1013,6 +1052,11 @@ function createGestureSession(options) {
       samples: [{ y: event.clientY, time: event.timeStamp }]
     };
     suppressHandleClick = false;
+    try {
+      area.setPointerCapture(event.pointerId);
+    } catch {
+      pointer = null;
+    }
   };
   const onPointerMove = (event) => {
     const session = pointer;
@@ -1025,8 +1069,10 @@ function createGestureSession(options) {
       }
       if (Math.abs(deltaX) >= Math.abs(deltaY)) {
         pointer = null;
+        releaseCapture(session);
         return;
       }
+      session.startHeight = options.interrupt() ?? session.startHeight;
       session.accepted = true;
       session.interactionId = options.controller.beginInteraction(session.origin);
       options.getRegistry().elements.popup?.setAttribute("data-swiping", "");
@@ -1043,11 +1089,10 @@ function createGestureSession(options) {
     const geometry = options.getGeometry();
     if (!geometry) return;
     const points = geometry.resolvedSnapPoints;
-    const minimum = points[0]?.height ?? session.startHeight;
     const maximum = points.at(-1)?.height ?? session.startHeight;
     session.currentHeight = applyRubberBand({
       value: session.startHeight - deltaY,
-      min: minimum,
+      min: 0,
       max: maximum,
       dimension: geometry.viewport.height,
       constant: rubberBandConstant
@@ -1059,6 +1104,7 @@ function createGestureSession(options) {
     if (!session || event.pointerId !== session.pointerId) return;
     if (!session.accepted || session.interactionId === null) {
       pointer = null;
+      releaseCapture(session);
       return;
     }
     addSamples(session, event);
@@ -1076,7 +1122,7 @@ function createGestureSession(options) {
       cancelPointer("target-changed", true);
       return;
     }
-    const dragDistance = session.startHeight - session.currentHeight;
+    const dragDistance = event.clientY - session.startY;
     const destination = selectReleaseDestination({
       currentHeight: session.currentHeight,
       activeSnapPoint: target.snapPoint,
@@ -1102,6 +1148,7 @@ function createGestureSession(options) {
     options.controller.endInteraction(session.interactionId);
     options.getRegistry().elements.popup?.removeAttribute("data-swiping");
     pointer = null;
+    releaseCapture(session);
     if (destination.type === "close") {
       options.controller.requestClose("gesture", {
         origin: "gesture",
@@ -1777,6 +1824,7 @@ function bindShellSheetToDom(controller, options = {}) {
     getRegistry: registry.getSnapshot,
     getGeometry: () => geometry,
     ...options.gesture ? { tuning: options.gesture } : {},
+    interrupt: () => coordinator.interruptForGesture(),
     reconcile: () => coordinator.schedule("gesture-reconcile")
   });
   const refreshObservers = () => {
