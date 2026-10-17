@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
-import * as bridge from '../build/dev/javascript/gleam_drawer/gleam_drawer/internal/core_bridge.mjs';
-import * as ffi from '../build/dev/javascript/gleam_drawer/gleam_drawer_ffi.mjs';
+import * as bridge from './helpers/geometry.mjs';
+import { nativeSnapshot, nativeEvent } from './helpers/representation.mjs';
 import * as d from '../build/dev/javascript/gleam_drawer/gleam_drawer.mjs';
 import * as m from '../build/dev/javascript/gleam_drawer/gleam_drawer/model.mjs';
 import { Ok, toList } from '../build/dev/javascript/gleam_drawer/gleam.mjs';
@@ -66,12 +66,12 @@ function nativeTarget(id, open = true) {
 const normalize = value => JSON.parse(JSON.stringify(value));
 
 test('native Gleam lifecycle matches upstream requests, snapshots, token replacement and destruction', () => {
-  const g = ok(ffi.create(new Some(target('a'))));
+  const g = ok(d.create(new Some(target('a'))));
   const t = upstream.createShellSheetController(nativeTarget('a'));
   const ge = [], te = [];
-  g.subscribe((s,e)=>ge.push(normalize([s,e])));
+  d.subscribe(g, (s,e)=>ge.push(normalize([nativeSnapshot(s),nativeEvent(e)])));
   t.subscribe((s,e)=>te.push(normalize([s,e])));
-  const compare = () => { assert.deepEqual(normalize(g.getSnapshot()), normalize(t.getSnapshot())); assert.deepEqual(ge,te); };
+  const compare = () => { assert.deepEqual(normalize(nativeSnapshot(d.snapshot(g))), normalize(t.getSnapshot())); assert.deepEqual(ge,te); };
   compare();
   for (const [method,args] of [
     ['requestOpen',['trigger']], ['beginTransition',['a']], ['settleTransition',[1]],
@@ -79,12 +79,26 @@ test('native Gleam lifecycle matches upstream requests, snapshots, token replace
     ['requestSnap',['small',{origin:'gesture',release:{interactionId:1,distance:12,velocity:0.1,projectedHeight:300}}]],
     ['beginTransition',['a']], ['beginTransition',['a']], ['settleTransition',[2]],
     ['cancelTransition',[3,'driver-cancelled']], ['requestClose',['escape']],
-  ]) { assert.equal(g[method](...args),t[method](...args)); compare(); }
-  ok(ffi.sync(g,target('b'))); t.sync(nativeTarget('b')); compare();
-  g.beginInteraction('drag-area'); t.beginInteraction('drag-area'); compare();
-  ok(ffi.sync(g,target('c',false))); t.sync(nativeTarget('c',false)); compare();
-  g.beginTransition('c'); t.beginTransition('c'); compare();
-  g.destroy(); t.destroy(); compare();
-  g.destroy(); t.destroy(); compare();
-  assert.throws(()=>g.requestOpen()); assert.throws(()=>t.requestOpen());
+  ]) { assert.equal(invoke(g,method,args),t[method](...args)); compare(); }
+  ok(d.sync(g,target('b'))); t.sync(nativeTarget('b')); compare();
+  ok(d.begin_interaction(g,new m.DragAreaOrigin())); t.beginInteraction('drag-area'); compare();
+  ok(d.sync(g,target('c',false))); t.sync(nativeTarget('c',false)); compare();
+  ok(d.begin_transition(g,'c')); t.beginTransition('c'); compare();
+  ok(d.destroy(g)); t.destroy(); compare();
+  ok(d.destroy(g)); t.destroy(); compare();
+  assert.equal(d.request_open(g,new m.Api()).isOk(), false); assert.throws(()=>t.requestOpen());
 });
+
+function invoke(c, method, args) {
+  switch (method) {
+    case 'requestOpen': return ok(d.request_open(c,new m.Trigger()));
+    case 'beginTransition': return ok(d.begin_transition(c,args[0]));
+    case 'settleTransition': return ok(d.settle_transition(c,args[0]));
+    case 'beginInteraction': return ok(d.begin_interaction(c,new m.HandleOrigin()));
+    case 'endInteraction': return ok(d.end_interaction(c,args[0]));
+    case 'requestSnap': { const r=args[1].release; return ok(d.request_snap(c,args[0],new m.Gesture(),new Some(new m.Release(r.interactionId,r.distance,r.velocity,r.projectedHeight)))); }
+    case 'cancelTransition': return ok(d.cancel_transition(c,args[0],new m.DriverCancelled()));
+    case 'requestClose': return ok(d.request_close(c,new m.Escape(),new m.Keyboard(),none));
+    default: throw new Error(method);
+  }
+}

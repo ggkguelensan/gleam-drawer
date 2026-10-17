@@ -1,34 +1,42 @@
 # Gleam Drawer
 
-A Gleam port of the [Shell Sheet bottom-sheet](https://github.com/ggkguelensan/bottom-sheet)
-core, with its browser driver adapted through FFI. The controller state machine,
-target validation, snap resolution, release selection and rubber-band algorithm
-are implemented in Gleam. The pure core runs on **JavaScript and Erlang**; the
-DOM binding runs in the browser.
+A Gleam port of [Shell Sheet bottom-sheet](https://github.com/ggkguelensan/bottom-sheet).
+All drawer behavior is implemented in Gleam, including the browser driver.
+The pure state machine and geometry run on **JavaScript and Erlang**; the
+imperative controller and DOM binding target browser JavaScript.
 
 ## Architecture
 
 ```text
 Original bottom-sheet                 gleam-drawer
 TypeScript core                       Gleam core + geometry + validation
-  └─ TypeScript DOM driver              └─ representation / event-delivery FFI
-      └─ React / Effector adapters          └─ existing DOM driver (WAAPI)
-                                                └─ Gleam application
+  └─ TypeScript DOM driver              └─ Gleam controller + browser runtime
+      └─ React / Effector adapters          ├─ gesture / motion / view
+                                           ├─ registry / modality / ledger
+                                           └─ platform.gleam
+                                               └─ primitive browser FFI
 ```
 
-- Atomic targets, application-owned open/close/snap decisions, ordered requests
-  and facts, stale transition protection, cancellation and idempotent teardown.
+- Atomic targets, application-owned open/close/snap decisions, queued subscriber
+  delivery, stale transition protection, cancellation and idempotent teardown.
 - Ratio, pixel and content snap points; velocity projection, sequential snapping
   and rubber-band resistance.
-- Browser drag gestures, independently scrolling body, keyed region transitions,
-  sheet/dialog morphing, reduced motion, focus trapping/restoration, background
-  isolation and scroll locking from the upstream DOM driver.
-- No React, Effector, Motion or npm runtime dependencies. The browser driver is
-  bundled in the package; rebuilding it requires the development tools below.
+- Pointer capture, frame scheduling, drag tracking and animation interruption.
+- Keyed region crossfades, sheet/dialog morphing, content resize policies and
+  reduced motion, using the browser's Web Animations API.
+- Focus trapping/restoration, background isolation, reference-counted scroll
+  locking, registration cleanup and restoration of owned styles/attributes.
+- No TypeScript runtime, bundled upstream driver, React, Effector, Motion or npm
+  runtime dependencies.
 
-`tests/reference/core` contains the frozen TypeScript core **only as a test
-oracle**. It is never imported by the shipped driver. Source provenance and the
-upstream revision are recorded in [vendor/README.md](vendor/README.md).
+`src/gleam_drawer/browser/platform_ffi.mjs` is the sole handwritten JavaScript
+file in the library. It exposes DOM access, event listeners, mutable references,
+observers, animation clocks and other browser primitives. Gesture thresholds,
+animation keyframes, state transitions and accessibility policy live in Gleam.
+`npm run check:boundary` guards this source boundary.
+
+`tests/reference/core` preserves the upstream TypeScript core **only as a test
+oracle**, never as production code. See [source provenance](tests/reference/README.md).
 
 ## Run the example
 
@@ -130,9 +138,9 @@ release registrations, destroy the binding, then destroy the controller. Bind
 and register after the browser framework mounts the elements; destroy before
 it removes them. No browser globals are read at module import time.
 
-The initial adapter uses the stock WAAPI/environment/modality drivers and
-exposes dismissal options and insets. Custom animation/environment injection
-and framework-specific Lustre components are not part of this API.
+The native Gleam binding exposes dismissal options and insets. Custom
+animation/environment injection and framework-specific Lustre components are
+not part of this API.
 
 ### Pure state machine
 
@@ -156,14 +164,17 @@ npx playwright install chromium webkit
 npm run check
 ```
 
-The checks build the library and demo, run Gleam tests on JavaScript and Erlang,
-exercise the FFI and SSR import, compare geometry against the original on 1000
-deterministic cases, compare lifecycle events/snapshots, and run browser scenarios
-in desktop Chromium and mobile WebKit. Browser tests cover open/close, snapping,
-presentation morphing, state preservation, focus restoration, backdrop dismissal,
-reduced motion and dragging.
+The checks enforce the primitive FFI boundary, build the library and demo,
+run Gleam tests on JavaScript and Erlang, exercise controller subscriptions and
+SSR imports, compare geometry against the original on 1000 deterministic cases,
+and compare lifecycle events/snapshots.
 
-Run `npm run build:engine` after updating the vendored DOM sources. The generated
-`src/gleam_drawer/internal/engine.mjs` is checked in for Gleam-only consumers.
-CI verifies regeneration produces no diff. No package or website is published
-by the build.
+Browser scenarios run in desktop Chromium and mobile WebKit. They cover
+open/close, snapping, morphing, input preservation, focus restoration, reduced
+motion, fast drag tracking, release continuity, interrupted animations, dynamic
+region registration, superseded targets, resize policies, nested lock ownership
+and teardown. The CDP touch-input scenario runs only in Chromium.
+
+`npm run build` needs no generated engine or vendored DOM sources. Browser-test
+fixtures are bundled separately into `dist` by `npm run test:browser`; they are
+not library runtime code. No package or website is published by the build.

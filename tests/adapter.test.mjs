@@ -22,7 +22,7 @@ test('SSR import, initial targets and errors have real Gleam representations', (
   ok(d.destroy(c));
 });
 
-test('events are exhaustively decoded, including release evidence and terminal facts', () => {
+test('events preserve every native Gleam variant, including release evidence and terminal facts', () => {
   const first = opened('first');
   const c = ok(d.create(new Some(first)));
   const events = [];
@@ -76,4 +76,23 @@ test('reentrant acceptance preserves event snapshots and target identity', () =>
   stop();
   ok(d.destroy(c));
   assert.equal(events.length, 2);
+});
+
+test('subscriber failures drain queued publications and leave dispatch reusable', () => {
+  const c = ok(d.create(none));
+  const events = [];
+  const stop = d.subscribe(c, (_, event) => {
+    if (event instanceof m.OpenRequested) ok(d.sync(c, opened('accepted')));
+    throw new Error('subscriber failed');
+  });
+  d.subscribe(c, (_, event) => events.push(event));
+  const failure = d.request_open(c, new m.Api());
+  assert.ok(failure instanceof GleamError);
+  assert.match(failure[0], /subscriber failed/);
+  assert.deepEqual(events.map(e => e.constructor.name), ['OpenRequested', 'TargetSynced']);
+  assert.equal(d.snapshot(c).target[0].id, 'accepted');
+  stop(); stop();
+  ok(d.request_close(c, new m.Escape(), new m.Keyboard(), none));
+  assert.ok(events.at(-1) instanceof m.CloseRequested);
+  ok(d.destroy(c));
 });

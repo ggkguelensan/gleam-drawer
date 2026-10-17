@@ -19,4 +19,3 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium webkit
       - run: npm run check
-      - run: git diff --exit-code -- src/gleam_drawer/internal/engine.mjs

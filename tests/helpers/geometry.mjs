@@ -1,8 +1,8 @@
 // Representation adapter for the browser driver. All algorithms live in Gleam.
-import * as geometry from '../geometry.mjs';
-import * as m from '../model.mjs';
-import { Ok, toList } from '../../gleam.mjs';
-import { Some, None } from '../../../gleam_stdlib/gleam/option.mjs';
+import * as geometry from '../../build/dev/javascript/gleam_drawer/gleam_drawer/geometry.mjs';
+import * as m from '../../build/dev/javascript/gleam_drawer/gleam_drawer/model.mjs';
+import { Ok, toList } from '../../build/dev/javascript/gleam_drawer/gleam.mjs';
+import { Some, None } from '../../build/dev/javascript/gleam_stdlib/gleam/option.mjs';
 const option = value => value == null ? new None() : new Some(value);
 const unwrap = result => { if (result instanceof Ok) return result[0]; throw new Error(result[0]); };
 export function resolveSnapPoints(points, v) {
