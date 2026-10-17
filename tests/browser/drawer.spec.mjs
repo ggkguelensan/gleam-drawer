@@ -96,18 +96,36 @@ test('downward drag translates without collapsing content and release stays cont
   await expect.poll(async () => (await popup.boundingBox()).y).toBeCloseTo(initial.y + 45, 0);
   expect((await popup.boundingBox()).height).toBeCloseTo(initial.height, 0);
   await page.waitForTimeout(150); // Release without a fling, returning to the same snap.
-  await page.evaluate(() => {
-    window.dragFrames = [];
-    const sample = () => {
-      window.dragFrames.push(document.querySelector('#popup').getBoundingClientRect().y);
-      if (window.dragFrames.length < 24) requestAnimationFrame(sample);
+  // Freeze the real WAAPI animation at creation. Sampling arbitrary RAF gaps
+  // measures runner load, not continuity (WebKit CI can skip several frames).
+  await popup.evaluate(el => {
+    const animate = el.animate;
+    el.animate = function (...args) {
+      const animation = animate.apply(this, args);
+      animation.pause();
+      animation.currentTime = 0;
+      return animation;
     };
-    requestAnimationFrame(sample);
   });
   await page.mouse.up();
-  await expect.poll(async () => (await popup.boundingBox()).y).toBeCloseTo(initial.y, 0);
-  const frames = await page.evaluate(() => window.dragFrames);
+  await expect.poll(() => popup.evaluate(el => el.getAnimations().length)).toBeGreaterThan(0);
+  const frames = await popup.evaluate(el => {
+    const animations = el.getAnimations();
+    const frames = [];
+    for (let step = 0; step <= 20; step++) {
+      for (const animation of animations) {
+        animation.currentTime = Number(animation.effect.getTiming().duration) * step / 20;
+      }
+      frames.push(el.getBoundingClientRect().y);
+    }
+    delete el.animate;
+    for (const animation of animations) animation.finish();
+    return frames;
+  });
+  expect(frames[0]).toBeCloseTo(initial.y + 45, 0);
+  expect(frames.at(-1)).toBeCloseTo(initial.y, 0);
   expect(Math.max(...frames.slice(1).map((y, i) => Math.abs(y - frames[i])))).toBeLessThan(20);
+  await expect.poll(async () => (await popup.boundingBox()).y).toBeCloseTo(initial.y, 0);
 });
 
 test('grabbing an in-flight snap cancels its clock and holds the new position', async ({ page }) => {
